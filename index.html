@@ -769,7 +769,7 @@
         // Auto-detect WebSocket URL (local vs Render)
         const WS_URL = window.location.hostname === 'localhost' 
             ? 'ws://localhost:8765'
-            : `wss://${window.location.hostname}:10000`;
+            : `wss://${window.location.hostname}`;
         
         // Generate PGP keys
         async function generateKeys() {

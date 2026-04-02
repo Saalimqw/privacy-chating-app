@@ -4,6 +4,7 @@ import json
 import secrets
 import string
 import os
+import http
 from datetime import datetime
 from typing import Optional
 from collections import defaultdict
@@ -601,7 +602,13 @@ async def main():
     print(f"Storage mode: {'Redis' if is_redis_connected() else 'In-Memory'}")
     print(f"Persistence: {'PostgreSQL' if is_postgres_connected() else 'None (in-memory only)'}")
     
-    async with websockets.serve(handle_client, "0.0.0.0", port):
+    # Health check handler for Back4app
+    async def process_request(path, request_headers):
+        if path == "/":
+            return (http.HTTPStatus.OK, [("Content-Type", "text/plain")], b"OK")
+        return None  # Let websockets handle WebSocket requests
+    
+    async with websockets.serve(handle_client, "0.0.0.0", port, process_request=process_request):
         await asyncio.Future()  # run forever
 
 if __name__ == "__main__":

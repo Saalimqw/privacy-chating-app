@@ -766,7 +766,10 @@
         let recordingStartTime = null;
         let recordingTimer = null;
         
-        const WS_URL = 'ws://localhost:8765';
+        // Auto-detect WebSocket URL (local vs Render)
+        const WS_URL = window.location.hostname === 'localhost' 
+            ? 'ws://localhost:8765'
+            : `wss://${window.location.hostname}:10000`;
         
         // Generate PGP keys
         async function generateKeys() {

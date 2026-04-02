@@ -3,6 +3,7 @@ import websockets
 import json
 import secrets
 import string
+import os
 from datetime import datetime
 from collections import defaultdict
 
@@ -286,8 +287,11 @@ async def handle_client(websocket):
                     })))
 
 async def main():
-    print("Starting Secure Chat Server on ws://0.0.0.0:8765")
-    async with websockets.serve(handle_client, "0.0.0.0", 8765):
+    # Use PORT from environment (Render sets this), default to 8765 for local
+    port = int(os.environ.get('PORT', 8765))
+    
+    print(f"Starting Secure Chat Server on port {port}")
+    async with websockets.serve(handle_client, "0.0.0.0", port):
         await asyncio.Future()  # run forever
 
 if __name__ == "__main__":

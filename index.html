@@ -767,7 +767,7 @@
         let recordingTimer = null;
         
         // Auto-detect WebSocket URL (local vs Render)
-        const WS_URL = window.location.hostname === 'localhost' 
+        const WS_URL = (window.location.hostname === 'localhost' || !window.location.hostname)
             ? 'ws://localhost:8765'
             : `wss://${window.location.hostname}`;
         

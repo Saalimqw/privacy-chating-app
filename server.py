@@ -6,18 +6,46 @@ import string
 import os
 from datetime import datetime
 from typing import Optional
-import redis.asyncio as redis
-import asyncpg
+from collections import defaultdict
 
-# Redis client for shared state
-redis_client: Optional[redis.Redis] = None
+# Try to import Redis, but make it optional
+try:
+    import redis.asyncio as redis
+    REDIS_AVAILABLE = True
+except ImportError:
+    REDIS_AVAILABLE = False
+    redis = None
 
-# PostgreSQL pool
-db_pool: Optional[asyncpg.Pool] = None
+# Try to import asyncpg, but make it optional
+try:
+    import asyncpg
+    POSTGRES_AVAILABLE = True
+except ImportError:
+    POSTGRES_AVAILABLE = False
+    asyncpg = None
+
+# Redis client for shared state (optional)
+redis_client = None
+
+# PostgreSQL pool (optional)
+db_pool = None
 
 # Local WebSocket connections: {user_id: websocket}
-# This stays in-memory per instance
 local_clients = {}
+
+# In-memory fallback storage (used when Redis is not available)
+memory_users = {}  # {user_id: {public_key, display_name, status}}
+memory_friends = defaultdict(set)  # {user_id: set(friend_ids)}
+memory_pending = defaultdict(set)  # {user_id: set(requester_ids)}
+memory_messages = defaultdict(list)  # {user_id: [message_data]}
+
+def is_redis_connected():
+    """Check if Redis is available and connected"""
+    return REDIS_AVAILABLE and redis_client is not None
+
+def is_postgres_connected():
+    """Check if PostgreSQL is available and connected"""
+    return POSTGRES_AVAILABLE and db_pool is not None
 
 # Generate random 6-character user ID
 def generate_user_id():
@@ -26,11 +54,18 @@ def generate_user_id():
 async def init_db():
     """Initialize PostgreSQL connection pool and create tables if not exist"""
     global db_pool
+    if not POSTGRES_AVAILABLE:
+        print("PostgreSQL not available (asyncpg not installed)")
+        return
+    
     db_url = os.environ.get('DATABASE_URL')
-    if db_url:
+    if not db_url:
+        print("PostgreSQL: Not configured (no DATABASE_URL)")
+        return
+    
+    try:
         db_pool = await asyncpg.create_pool(db_url)
         async with db_pool.acquire() as conn:
-            # Create tables
             await conn.execute('''
                 CREATE TABLE IF NOT EXISTS users (
                     user_id VARCHAR(6) PRIMARY KEY,
@@ -64,27 +99,117 @@ async def init_db():
             await conn.execute('''
                 CREATE INDEX IF NOT EXISTS idx_messages_to_id ON messages(to_id, delivered)
             ''')
+        print("PostgreSQL: Connected")
+    except Exception as e:
+        print(f"PostgreSQL: Connection failed - {e}")
+        db_pool = None
 
 async def init_redis():
     """Initialize Redis connection"""
     global redis_client
+    if not REDIS_AVAILABLE:
+        print("Redis not available (redis package not installed)")
+        return
+    
     redis_url = os.environ.get('REDIS_URL')
-    if redis_url:
-        redis_client = redis.from_url(redis_url, decode_responses=True)
+    try:
+        if redis_url:
+            redis_client = redis.from_url(redis_url, decode_responses=True)
+        else:
+            redis_client = redis.Redis(host='localhost', port=6379, decode_responses=True)
+        await redis_client.ping()
+        print("Redis: Connected")
+    except Exception as e:
+        print(f"Redis: Connection failed - {e}")
+        print("Falling back to in-memory storage")
+        redis_client = None
+
+# Storage abstraction functions
+async def user_exists(user_id):
+    if is_redis_connected():
+        return await redis_client.exists(f'user:{user_id}')
+    return user_id in memory_users
+
+async def get_user(user_id):
+    if is_redis_connected():
+        return await redis_client.hgetall(f'user:{user_id}')
+    return memory_users.get(user_id, {})
+
+async def set_user(user_id, data):
+    if is_redis_connected():
+        await redis_client.hset(f'user:{user_id}', mapping=data)
     else:
-        # Fallback for local development
-        redis_client = redis.Redis(host='localhost', port=6379, decode_responses=True)
+        memory_users[user_id] = data
+
+async def is_friend(user_id, friend_id):
+    if is_redis_connected():
+        return await redis_client.sismember(f'friends:{user_id}', friend_id)
+    return friend_id in memory_friends[user_id]
+
+async def add_friend(user_id, friend_id):
+    if is_redis_connected():
+        await redis_client.sadd(f'friends:{user_id}', friend_id)
+        await redis_client.sadd(f'friends:{friend_id}', user_id)
+    else:
+        memory_friends[user_id].add(friend_id)
+        memory_friends[friend_id].add(user_id)
+
+async def get_friends(user_id):
+    if is_redis_connected():
+        return await redis_client.smembers(f'friends:{user_id}')
+    return memory_friends[user_id]
+
+async def add_pending(to_user, from_user):
+    if is_redis_connected():
+        await redis_client.sadd(f'pending:{to_user}', from_user)
+    else:
+        memory_pending[to_user].add(from_user)
+
+async def remove_pending(to_user, from_user):
+    if is_redis_connected():
+        await redis_client.srem(f'pending:{to_user}', from_user)
+    else:
+        memory_pending[to_user].discard(from_user)
+
+async def is_pending(to_user, from_user):
+    if is_redis_connected():
+        return await redis_client.sismember(f'pending:{to_user}', from_user)
+    return from_user in memory_pending[to_user]
+
+async def get_pending(user_id):
+    if is_redis_connected():
+        return await redis_client.smembers(f'pending:{user_id}')
+    return memory_pending[user_id]
+
+async def queue_message(to_user, message_data):
+    if is_redis_connected():
+        await redis_client.lpush(f'messages:{to_user}', json.dumps(message_data))
+    else:
+        memory_messages[to_user].append(message_data)
+
+async def get_queued_messages(user_id):
+    if is_redis_connected():
+        messages = []
+        while True:
+            msg = await redis_client.rpop(f'messages:{user_id}')
+            if msg is None:
+                break
+            messages.append(json.loads(msg))
+        return messages
+    msgs = memory_messages[user_id][:]
+    memory_messages[user_id] = []
+    return msgs
 
 async def register_user(websocket, data):
     """Register a new user or reconnect existing user"""
     existing_user_id = data.get('user_id')
     
     # If reconnecting
-    if existing_user_id and await redis_client.exists(f'user:{existing_user_id}'):
+    if existing_user_id and await user_exists(existing_user_id):
         user_id = existing_user_id
         
-        # Update Redis with new connection info
-        await redis_client.hset(f'user:{user_id}', mapping={
+        # Update user data
+        await set_user(user_id, {
             'public_key': data.get('public_key', ''),
             'display_name': data.get('display_name', f'User-{user_id}'),
             'status': 'online',
@@ -104,16 +229,16 @@ async def register_user(websocket, data):
     # Generate new user
     user_id = generate_user_id()
     
-    # Store in Redis
-    await redis_client.hset(f'user:{user_id}', mapping={
+    # Store user data
+    await set_user(user_id, {
         'public_key': data.get('public_key', ''),
         'display_name': data.get('display_name', f'User-{user_id}'),
         'status': 'online',
         'instance_id': os.environ.get('RENDER_INSTANCE_ID', 'local')
     })
     
-    # Store in PostgreSQL
-    if db_pool:
+    # Persist to PostgreSQL if available
+    if is_postgres_connected():
         async with db_pool.acquire() as conn:
             await conn.execute('''
                 INSERT INTO users (user_id, public_key, display_name)
@@ -137,28 +262,29 @@ async def send_friend_request(user_id, data):
     """Send a friend request to another user"""
     target_id = data.get('target_id')
     
-    # Check if target exists in Redis
-    if not await redis_client.exists(f'user:{target_id}'):
+    # Check if target exists
+    if not await user_exists(target_id):
         return {'type': 'error', 'message': 'User not found'}
     
     if target_id == user_id:
         return {'type': 'error', 'message': 'Cannot add yourself'}
     
-    # Check if already friends in Redis
-    if await redis_client.sismember(f'friends:{user_id}', target_id):
+    # Check if already friends
+    if await is_friend(user_id, target_id):
         return {'type': 'error', 'message': 'Already friends'}
     
-    # Add to pending requests in Redis
-    await redis_client.sadd(f'pending:{target_id}', user_id)
+    # Add to pending requests
+    await add_pending(target_id, user_id)
     
     # Notify target if online
-    target_status = await redis_client.hget(f'user:{target_id}', 'status')
-    if target_status == 'online':
+    target_data = await get_user(target_id)
+    if target_data.get('status') == 'online':
+        user_data = await get_user(user_id)
         await notify_user(target_id, {
             'type': 'friend_request',
             'from_id': user_id,
-            'from_name': await redis_client.hget(f'user:{user_id}', 'display_name'),
-            'public_key': await redis_client.hget(f'user:{user_id}', 'public_key')
+            'from_name': user_data.get('display_name', ''),
+            'public_key': user_data.get('public_key', '')
         })
     
     return {
@@ -172,18 +298,17 @@ async def accept_friend_request(user_id, data):
     requester_id = data.get('requester_id')
     
     # Check if request exists
-    if not await redis_client.sismember(f'pending:{user_id}', requester_id):
+    if not await is_pending(user_id, requester_id):
         return {'type': 'error', 'message': 'No pending request from this user'}
     
     # Remove from pending
-    await redis_client.srem(f'pending:{user_id}', requester_id)
+    await remove_pending(user_id, requester_id)
     
-    # Add to both users' friend sets in Redis
-    await redis_client.sadd(f'friends:{user_id}', requester_id)
-    await redis_client.sadd(f'friends:{requester_id}', user_id)
+    # Add to both users' friend sets
+    await add_friend(user_id, requester_id)
     
-    # Persist to PostgreSQL
-    if db_pool:
+    # Persist to PostgreSQL if available
+    if is_postgres_connected():
         async with db_pool.acquire() as conn:
             await conn.execute('''
                 INSERT INTO friendships (user_id, friend_id)
@@ -192,8 +317,8 @@ async def accept_friend_request(user_id, data):
             ''', user_id, requester_id)
     
     # Notify both users
-    requester_data = await redis_client.hgetall(f'user:{requester_id}')
-    user_data = await redis_client.hgetall(f'user:{user_id}')
+    requester_data = await get_user(requester_id)
+    user_data = await get_user(user_id)
     
     await notify_user(user_id, {
         'type': 'friend_accepted',
@@ -214,7 +339,7 @@ async def accept_friend_request(user_id, data):
 async def reject_friend_request(user_id, data):
     """Reject a pending friend request"""
     requester_id = data.get('requester_id')
-    await redis_client.srem(f'pending:{user_id}', requester_id)
+    await remove_pending(user_id, requester_id)
     
     await notify_user(requester_id, {
         'type': 'friend_rejected',
@@ -229,45 +354,49 @@ async def send_message(user_id, data):
     encrypted_message = data.get('encrypted_message')
     
     # Check if target exists
-    if not await redis_client.exists(f'user:{target_id}'):
+    if not await user_exists(target_id):
         return {'type': 'error', 'message': 'Recipient not found'}
     
     # Check if friends
-    if not await redis_client.sismember(f'friends:{user_id}', target_id):
+    if not await is_friend(user_id, target_id):
         return {'type': 'error', 'message': 'Not friends with this user'}
     
     timestamp = datetime.now().isoformat()
+    user_data = await get_user(user_id)
     
-    # Persist message to PostgreSQL
-    if db_pool:
+    message_data = {
+        'type': 'message',
+        'from_id': user_id,
+        'from_name': user_data.get('display_name', ''),
+        'encrypted_message': encrypted_message,
+        'timestamp': timestamp
+    }
+    
+    # Persist to PostgreSQL if available
+    if is_postgres_connected():
         async with db_pool.acquire() as conn:
             await conn.execute('''
                 INSERT INTO messages (from_id, to_id, encrypted_message, timestamp)
                 VALUES ($1, $2, $3, $4)
             ''', user_id, target_id, encrypted_message, timestamp)
-    
-    message_data = {
-        'type': 'message',
-        'from_id': user_id,
-        'from_name': await redis_client.hget(f'user:{user_id}', 'display_name'),
-        'encrypted_message': encrypted_message,
-        'timestamp': timestamp
-    }
+    else:
+        # Queue for offline delivery
+        await queue_message(target_id, message_data)
     
     # Try to deliver immediately if online
-    target_status = await redis_client.hget(f'user:{target_id}', 'status')
-    if target_status == 'online':
+    target_data = await get_user(target_id)
+    if target_data.get('status') == 'online':
         await notify_user(target_id, message_data)
     
     return {'type': 'message_sent', 'message': 'Message delivered'}
 
 async def get_friends_list(user_id):
     """Get list of friends for a user"""
-    friend_ids = await redis_client.smembers(f'friends:{user_id}')
+    friend_ids = await get_friends(user_id)
     friend_list = []
     
     for friend_id in friend_ids:
-        friend_data = await redis_client.hgetall(f'user:{friend_id}')
+        friend_data = await get_user(friend_id)
         if friend_data:
             friend_list.append({
                 'user_id': friend_id,
@@ -283,11 +412,11 @@ async def get_friends_list(user_id):
 
 async def get_pending_requests(user_id):
     """Get pending friend requests for a user"""
-    requester_ids = await redis_client.smembers(f'pending:{user_id}')
+    requester_ids = await get_pending(user_id)
     requests = []
     
     for requester_id in requester_ids:
-        requester_data = await redis_client.hgetall(f'user:{requester_id}')
+        requester_data = await get_user(requester_id)
         if requester_data:
             requests.append({
                 'user_id': requester_id,
@@ -308,12 +437,15 @@ async def notify_user(user_id, message):
             await local_clients[user_id].send(json.dumps(message))
         except websockets.exceptions.ConnectionClosed:
             pass
-    else:
+    elif is_redis_connected():
         # Publish to Redis for other instances
         await redis_client.publish(f'user_channel:{user_id}', json.dumps(message))
 
 async def handle_redis_messages():
     """Listen for messages from Redis Pub/Sub for users on other instances"""
+    if not is_redis_connected():
+        return
+    
     pubsub = redis_client.pubsub()
     
     # Subscribe to channels for all local users
@@ -325,7 +457,6 @@ async def handle_redis_messages():
         if message['type'] == 'message':
             try:
                 data = json.loads(message['data'])
-                # Extract user_id from channel name
                 channel = message['channel']
                 user_id = channel.replace('user_channel:', '')
                 
@@ -337,7 +468,6 @@ async def handle_redis_messages():
 async def handle_client(websocket):
     """Main WebSocket handler"""
     user_id = None
-    pubsub_task = None
     
     try:
         async for message in websocket:
@@ -351,33 +481,40 @@ async def handle_client(websocket):
                     await websocket.send(json.dumps(response))
                     
                     # Start listening for Redis messages for this user
-                    asyncio.create_task(handle_redis_messages())
+                    if is_redis_connected():
+                        asyncio.create_task(handle_redis_messages())
                     
-                    # Load and send queued messages from PostgreSQL
-                    if db_pool and user_id:
-                        async with db_pool.acquire() as conn:
-                            rows = await conn.fetch('''
-                                SELECT from_id, encrypted_message, timestamp
-                                FROM messages
-                                WHERE to_id = $1 AND delivered = FALSE
-                                ORDER BY timestamp
-                            ''', user_id)
-                            
-                            for row in rows:
-                                await websocket.send(json.dumps({
-                                    'type': 'message',
-                                    'from_id': row['from_id'],
-                                    'from_name': await redis_client.hget(f'user:{row["from_id"]}', 'display_name') or 'Unknown',
-                                    'encrypted_message': row['encrypted_message'],
-                                    'timestamp': row['timestamp'].isoformat()
-                                }))
-                            
-                            # Mark as delivered
-                            await conn.execute('''
-                                UPDATE messages
-                                SET delivered = TRUE
-                                WHERE to_id = $1 AND delivered = FALSE
-                            ''', user_id)
+                    # Load and send queued messages
+                    if user_id:
+                        if is_postgres_connected():
+                            async with db_pool.acquire() as conn:
+                                rows = await conn.fetch('''
+                                    SELECT from_id, encrypted_message, timestamp
+                                    FROM messages
+                                    WHERE to_id = $1 AND delivered = FALSE
+                                    ORDER BY timestamp
+                                ''', user_id)
+                                
+                                for row in rows:
+                                    sender_data = await get_user(row['from_id'])
+                                    await websocket.send(json.dumps({
+                                        'type': 'message',
+                                        'from_id': row['from_id'],
+                                        'from_name': sender_data.get('display_name', 'Unknown'),
+                                        'encrypted_message': row['encrypted_message'],
+                                        'timestamp': row['timestamp'].isoformat()
+                                    }))
+                                
+                                await conn.execute('''
+                                    UPDATE messages
+                                    SET delivered = TRUE
+                                    WHERE to_id = $1 AND delivered = FALSE
+                                ''', user_id)
+                        else:
+                            # Send in-memory queued messages
+                            queued = await get_queued_messages(user_id)
+                            for msg in queued:
+                                await websocket.send(json.dumps(msg))
                 
                 elif action == 'friend_request':
                     if not user_id:
@@ -438,11 +575,14 @@ async def handle_client(websocket):
             if user_id in local_clients:
                 del local_clients[user_id]
             
-            # Update status in Redis
-            await redis_client.hset(f'user:{user_id}', 'status', 'offline')
+            # Update status
+            user_data = await get_user(user_id)
+            if user_data:
+                user_data['status'] = 'offline'
+                await set_user(user_id, user_data)
             
             # Notify friends
-            friend_ids = await redis_client.smembers(f'friends:{user_id}')
+            friend_ids = await get_friends(user_id)
             for friend_id in friend_ids:
                 await notify_user(friend_id, {
                     'type': 'status_update',
@@ -458,8 +598,8 @@ async def main():
     port = int(os.environ.get('PORT', 8765))
     
     print(f"Starting Secure Chat Server on port {port}")
-    print(f"Redis: {'Connected' if redis_client else 'Not configured'}")
-    print(f"PostgreSQL: {'Connected' if db_pool else 'Not configured'}")
+    print(f"Storage mode: {'Redis' if is_redis_connected() else 'In-Memory'}")
+    print(f"Persistence: {'PostgreSQL' if is_postgres_connected() else 'None (in-memory only)'}")
     
     async with websockets.serve(handle_client, "0.0.0.0", port):
         await asyncio.Future()  # run forever

@@ -766,10 +766,7 @@
         let recordingStartTime = null;
         let recordingTimer = null;
         
-        // Auto-detect WebSocket URL (local vs Render)
-        const WS_URL = (window.location.hostname === 'localhost' || !window.location.hostname)
-            ? 'ws://localhost:8765'
-            : `wss://${window.location.hostname}`;
+        const WS_URL = 'wss://privacychattingapp4-0zeuyw85.b4a.run';
         
         // Generate PGP keys
         async function generateKeys() {

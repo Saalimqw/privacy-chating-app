@@ -1,0 +1,1648 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Secure Chat - End-to-End Encrypted</title>
+    <script src="https://cdn.jsdelivr.net/npm/openpgp@5.11.1/dist/openpgp.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        :root {
+            --bg-dark: #0a0a0f;
+            --bg-card: #12121a;
+            --bg-input: #1a1a2e;
+            --border: #2a2a3e;
+            --primary: #6366f1;
+            --primary-hover: #4f46e5;
+            --text: #e2e8f0;
+            --text-muted: #94a3b8;
+            --success: #22c55e;
+            --warning: #f59e0b;
+            --error: #ef4444;
+        }
+        
+        body {
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            background: var(--bg-dark);
+            color: var(--text);
+            height: 100vh;
+            display: flex;
+        }
+        
+        .sidebar {
+            width: 320px;
+            background: var(--bg-card);
+            border-right: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .header {
+            padding: 20px;
+            border-bottom: 1px solid var(--border);
+        }
+        
+        .header h1 {
+            font-size: 1.5rem;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .header h1::before {
+            content: '🔒';
+            font-size: 1.2rem;
+        }
+        
+        .user-info {
+            padding: 15px 20px;
+            background: var(--bg-input);
+            margin: 10px;
+            border-radius: 8px;
+            font-size: 0.85rem;
+        }
+        
+        .user-id {
+            font-family: monospace;
+            color: var(--primary);
+            font-weight: 600;
+        }
+        
+        .status {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            margin-top: 8px;
+        }
+        
+        .btn-logout {
+            margin-left: auto;
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            cursor: pointer;
+            font-size: 0.9rem;
+            padding: 2px 6px;
+            border-radius: 4px;
+            transition: all 0.2s;
+        }
+        
+        .btn-logout:hover {
+            background: var(--error);
+            color: white;
+        }
+        
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--text-muted);
+        }
+        
+        .status-dot.online {
+            background: var(--success);
+        }
+        
+        .status-dot.connecting {
+            background: var(--warning);
+            animation: pulse 1.5s infinite;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        .nav-tabs {
+            display: flex;
+            border-bottom: 1px solid var(--border);
+        }
+        
+        .nav-tab {
+            flex: 1;
+            padding: 12px;
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            cursor: pointer;
+            font-size: 0.9rem;
+            transition: all 0.2s;
+        }
+        
+        .nav-tab:hover {
+            color: var(--text);
+            background: var(--bg-input);
+        }
+        
+        .nav-tab.active {
+            color: var(--primary);
+            border-bottom: 2px solid var(--primary);
+        }
+        
+        .tab-content {
+            flex: 1;
+            overflow-y: auto;
+            display: none;
+        }
+        
+        .tab-content.active {
+            display: block;
+        }
+        
+        .friend-list, .request-list {
+            list-style: none;
+        }
+        
+        .friend-item, .request-item {
+            padding: 15px 20px;
+            border-bottom: 1px solid var(--border);
+            cursor: pointer;
+            transition: background 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        
+        .friend-item:hover, .request-item:hover {
+            background: var(--bg-input);
+        }
+        
+        .friend-item.active {
+            background: var(--bg-input);
+            border-left: 3px solid var(--primary);
+        }
+        
+        .friend-info, .request-info {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        
+        .friend-name, .request-name {
+            font-weight: 500;
+        }
+        
+        .friend-id, .request-id {
+            font-family: monospace;
+            font-size: 0.75rem;
+            color: var(--text-muted);
+        }
+        
+        .friend-status {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: var(--text-muted);
+        }
+        
+        .friend-status.online {
+            background: var(--success);
+        }
+        
+        .request-actions {
+            display: flex;
+            gap: 8px;
+        }
+        
+        .btn-icon {
+            width: 32px;
+            height: 32px;
+            border-radius: 6px;
+            border: none;
+            cursor: pointer;
+            font-size: 1rem;
+            transition: all 0.2s;
+        }
+        
+        .btn-accept {
+            background: var(--success);
+            color: white;
+        }
+        
+        .btn-accept:hover {
+            background: #16a34a;
+        }
+        
+        .btn-reject {
+            background: var(--error);
+            color: white;
+        }
+        
+        .btn-reject:hover {
+            background: #dc2626;
+        }
+        
+        .add-friend-section {
+            padding: 15px;
+            border-bottom: 1px solid var(--border);
+        }
+        
+        .input-group {
+            display: flex;
+            gap: 8px;
+        }
+        
+        .input-field {
+            flex: 1;
+            padding: 10px 12px;
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text);
+            font-size: 0.9rem;
+        }
+        
+        .input-field:focus {
+            outline: none;
+            border-color: var(--primary);
+        }
+        
+        .btn {
+            padding: 10px 16px;
+            background: var(--primary);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            font-weight: 500;
+            transition: background 0.2s;
+        }
+        
+        .btn:hover {
+            background: var(--primary-hover);
+        }
+        
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        .main-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .chat-header {
+            padding: 20px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        
+        .chat-header-info h2 {
+            font-size: 1.1rem;
+            font-weight: 600;
+        }
+        
+        .chat-header-info span {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            font-family: monospace;
+        }
+        
+        .encryption-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 12px;
+            background: rgba(34, 197, 94, 0.1);
+            color: var(--success);
+            border-radius: 20px;
+            font-size: 0.75rem;
+            font-weight: 500;
+        }
+        
+        .messages-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        
+        .message {
+            max-width: 70%;
+            padding: 12px 16px;
+            border-radius: 12px;
+            font-size: 0.95rem;
+            line-height: 1.5;
+        }
+        
+        .message.incoming {
+            align-self: flex-start;
+            background: var(--bg-input);
+            border-bottom-left-radius: 4px;
+        }
+        
+        .message.outgoing {
+            align-self: flex-end;
+            background: var(--primary);
+            border-bottom-right-radius: 4px;
+        }
+        
+        .message-time {
+            font-size: 0.7rem;
+            color: var(--text-muted);
+            margin-top: 4px;
+        }
+        
+        .message.outgoing .message-time {
+            color: rgba(255, 255, 255, 0.7);
+        }
+        
+        .input-container {
+            padding: 15px 20px;
+            border-top: 1px solid var(--border);
+        }
+        
+        .media-actions {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+        
+        .media-actions .btn-icon {
+            width: 36px;
+            height: 36px;
+            font-size: 1.2rem;
+            background: var(--bg-input);
+            color: var(--text-muted);
+            transition: all 0.2s;
+        }
+        
+        .media-actions .btn-icon:hover {
+            background: var(--primary);
+            color: white;
+        }
+        
+        .media-actions .btn-icon.recording {
+            background: var(--error);
+            color: white;
+            animation: pulse 1s infinite;
+        }
+        
+        .voice-recording {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 10px 15px;
+            background: var(--bg-input);
+            border-radius: 8px;
+            margin-top: 10px;
+        }
+        
+        .recording-indicator {
+            width: 12px;
+            height: 12px;
+            background: var(--error);
+            border-radius: 50%;
+            animation: blink 1s infinite;
+        }
+        
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+        
+        .message-image, .message-video {
+            max-width: 300px;
+            max-height: 300px;
+            border-radius: 8px;
+            cursor: pointer;
+        }
+        
+        .message-audio {
+            width: 250px;
+            height: 40px;
+        }
+        
+        .voice-message {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            background: rgba(255,255,255,0.1);
+            padding: 8px 12px;
+            border-radius: 20px;
+        }
+        
+        .voice-message-play {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background: var(--primary);
+            color: white;
+            border: none;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .voice-message-duration {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+        }
+        
+        .message-input-wrapper {
+            display: flex;
+            gap: 12px;
+        }
+        
+        .message-input {
+            flex: 1;
+            padding: 12px 16px;
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text);
+            font-size: 0.95rem;
+            resize: none;
+            min-height: 44px;
+            max-height: 120px;
+        }
+        
+        .message-input:focus {
+            outline: none;
+            border-color: var(--primary);
+        }
+        
+        .btn-send {
+            padding: 12px 20px;
+            align-self: flex-end;
+        }
+        
+        .empty-state {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: var(--text-muted);
+            text-align: center;
+            padding: 40px;
+        }
+        
+        .empty-state-icon {
+            font-size: 4rem;
+            margin-bottom: 20px;
+        }
+        
+        .empty-state h3 {
+            color: var(--text);
+            margin-bottom: 8px;
+        }
+        
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.8);
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+        
+        .modal.active {
+            display: flex;
+        }
+        
+        .modal-content {
+            background: var(--bg-card);
+            border-radius: 12px;
+            padding: 30px;
+            max-width: 500px;
+            width: 90%;
+            max-height: 90vh;
+            overflow-y: auto;
+        }
+        
+        .modal-content h2 {
+            margin-bottom: 20px;
+        }
+        
+        .modal-content p {
+            color: var(--text-muted);
+            margin-bottom: 20px;
+            line-height: 1.6;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 500;
+        }
+        
+        .form-group input, .form-group textarea {
+            width: 100%;
+            padding: 12px;
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text);
+            font-size: 0.9rem;
+        }
+        
+        .form-group textarea {
+            min-height: 100px;
+            resize: vertical;
+        }
+        
+        .form-group input:focus, .form-group textarea:focus {
+            outline: none;
+            border-color: var(--primary);
+        }
+        
+        .btn-group {
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+        }
+        
+        .btn-secondary {
+            background: var(--bg-input);
+            color: var(--text);
+        }
+        
+        .btn-secondary:hover {
+            background: var(--border);
+        }
+        
+        .notification {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 15px 20px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+            z-index: 1001;
+            transform: translateX(400px);
+            transition: transform 0.3s;
+        }
+        
+        .notification.show {
+            transform: translateX(0);
+        }
+        
+        .notification.success {
+            border-color: var(--success);
+        }
+        
+        .notification.error {
+            border-color: var(--error);
+        }
+        
+        .no-friends, .no-requests {
+            padding: 40px 20px;
+            text-align: center;
+            color: var(--text-muted);
+        }
+        
+        .setup-section {
+            margin-bottom: 20px;
+        }
+        
+        .key-display {
+            background: var(--bg-input);
+            padding: 12px;
+            border-radius: 6px;
+            font-family: monospace;
+            font-size: 0.75rem;
+            word-break: break-all;
+            max-height: 200px;
+            overflow-y: auto;
+            margin-top: 10px;
+        }
+        
+        .hidden { display: none !important; }
+    </style>
+</head>
+<body>
+    <!-- Setup Modal -->
+    <div id="setupModal" class="modal active">
+        <div class="modal-content">
+            <h2>🔐 Welcome to Secure Chat</h2>
+            <p id="setupMessage">This is an end-to-end encrypted messaging platform. Your messages are encrypted in your browser and can only be read by the intended recipient.</p>
+            
+            <div id="newUserSection" class="setup-section">
+                <div class="form-group">
+                    <label for="displayName">Display Name</label>
+                    <input type="text" id="displayName" placeholder="Enter your name" maxlength="30">
+                </div>
+            </div>
+            
+            <div id="restoreSection" class="setup-section hidden">
+                <p>You have a saved identity. Would you like to restore it?</p>
+            </div>
+            
+            <div class="btn-group" id="setupButtons">
+                <button class="btn" onclick="generateKeys()">Create New Account</button>
+            </div>
+            
+            <div class="btn-group hidden" id="restoreButtons">
+                <button class="btn btn-secondary" onclick="createNewAccount()">Create New</button>
+                <button class="btn" onclick="restoreIdentity()">Restore Identity</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Sidebar -->
+    <div class="sidebar">
+        <div class="header">
+            <h1>Secure Chat</h1>
+        </div>
+        
+        <div class="user-info">
+            <div>Your ID: <span class="user-id" id="myUserId">Connecting...</span></div>
+            <div class="status">
+                <span class="status-dot connecting" id="statusDot"></span>
+                <span id="statusText">Connecting...</span>
+                <button class="btn-logout" onclick="logout()" title="Logout">🚪</button>
+            </div>
+        </div>
+        
+        <div class="nav-tabs">
+            <button class="nav-tab active" onclick="switchTab('friends')">Friends</button>
+            <button class="nav-tab" onclick="switchTab('requests')">Requests <span id="requestCount"></span></button>
+        </div>
+        
+        <!-- Friends Tab -->
+        <div id="friendsTab" class="tab-content active">
+            <div class="add-friend-section">
+                <div class="input-group">
+                    <input type="text" class="input-field" id="friendIdInput" placeholder="Enter User ID (e.g., A1B2C3)">
+                    <button class="btn" onclick="sendFriendRequest()">Add</button>
+                </div>
+            </div>
+            <ul class="friend-list" id="friendList">
+                <li class="no-friends">No friends yet. Add someone to start chatting!</li>
+            </ul>
+        </div>
+        
+        <!-- Requests Tab -->
+        <div id="requestsTab" class="tab-content">
+            <ul class="request-list" id="requestList">
+                <li class="no-requests">No pending requests</li>
+            </ul>
+        </div>
+    </div>
+    
+    <!-- Main Content -->
+    <div class="main-content">
+        <div id="emptyState" class="empty-state">
+            <div class="empty-state-icon">💬</div>
+            <h3>Welcome to Secure Chat</h3>
+            <p>Select a friend from the sidebar to start an encrypted conversation.<br>Your messages never touch our servers unencrypted.</p>
+        </div>
+        
+        <div id="chatInterface" class="hidden" style="flex: 1; display: flex; flex-direction: column;">
+            <div class="chat-header">
+                <div class="chat-header-info">
+                    <h2 id="chatFriendName">Friend Name</h2>
+                    <span id="chatFriendId">USER-ID</span>
+                </div>
+                <span class="encryption-badge">🔒 End-to-End Encrypted</span>
+            </div>
+            
+            <div class="messages-container" id="messagesContainer"></div>
+            
+            <div class="input-container">
+                <div class="media-actions">
+                    <button class="btn-icon" onclick="document.getElementById('fileInput').click()" title="Send Photo/Video">📷</button>
+                    <button class="btn-icon" id="voiceBtn" onclick="toggleVoiceRecording()" title="Voice Message">🎤</button>
+                    <input type="file" id="fileInput" accept="image/*,video/*" style="display:none" onchange="handleFileUpload(event)">
+                </div>
+                <div class="message-input-wrapper">
+                    <textarea class="message-input" id="messageInput" placeholder="Type an encrypted message..." rows="1" onkeydown="handleKeyDown(event)"></textarea>
+                    <button class="btn btn-send" id="sendBtn" onclick="sendMessage()">Send</button>
+                </div>
+                <div id="voiceRecording" class="voice-recording hidden">
+                    <span class="recording-indicator"></span>
+                    <span>Recording... <span id="recordingTime">0:00</span></span>
+                    <button class="btn-icon" onclick="stopVoiceRecording()">✓</button>
+                    <button class="btn-icon" onclick="cancelVoiceRecording()">✗</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Notification -->
+    <div id="notification" class="notification"></div>
+
+    <script>
+        // Global state
+        let ws = null;
+        let myUserId = null;
+        let myKeyPair = null;
+        let friends = new Map();
+        let friendPublicKeys = new Map();
+        let pendingRequests = [];
+        let activeChat = null;
+        let messages = new Map(); // Map<friendId, Array<messages>>
+        
+        // Media recording state
+        let mediaRecorder = null;
+        let recordedChunks = [];
+        let recordingStartTime = null;
+        let recordingTimer = null;
+        
+        const WS_URL = 'ws://localhost:8765';
+        
+        // Generate PGP keys
+        async function generateKeys() {
+            const displayName = document.getElementById('displayName').value.trim() || 'Anonymous';
+            
+            showNotification('Generating encryption keys...', 'info');
+            
+            try {
+                const { privateKey, publicKey } = await openpgp.generateKey({
+                    type: 'ecc',
+                    curve: 'curve25519',
+                    userIDs: [{ name: displayName }],
+                    format: 'armored'
+                });
+                
+                myKeyPair = { privateKey, publicKey };
+                
+                // Save to localStorage
+                localStorage.setItem('secureChat_identity', JSON.stringify({
+                    privateKey,
+                    publicKey,
+                    displayName
+                }));
+                
+                document.getElementById('setupModal').classList.remove('active');
+                connectWebSocket(displayName, publicKey);
+            } catch (error) {
+                showNotification('Failed to generate keys: ' + error.message, 'error');
+            }
+        }
+        
+        // Check for saved identity
+        function checkSavedIdentity() {
+            const saved = localStorage.getItem('secureChat_identity');
+            if (saved) {
+                // Show restore options instead of auto-restoring
+                document.getElementById('newUserSection').classList.add('hidden');
+                document.getElementById('restoreSection').classList.remove('hidden');
+                document.getElementById('setupButtons').classList.add('hidden');
+                document.getElementById('restoreButtons').classList.remove('hidden');
+                document.getElementById('setupMessage').textContent = 'Welcome back! You have a saved identity.';
+                return true;
+            }
+            return false;
+        }
+        
+        // Restore identity and connect
+        function restoreIdentity() {
+            const saved = localStorage.getItem('secureChat_identity');
+            if (saved) {
+                try {
+                    const identity = JSON.parse(saved);
+                    myKeyPair = { privateKey: identity.privateKey, publicKey: identity.publicKey };
+                    document.getElementById('setupModal').classList.remove('active');
+                    connectWebSocket(identity.displayName, identity.publicKey);
+                } catch (e) {
+                    console.error('Failed to restore identity:', e);
+                    showNotification('Failed to restore identity', 'error');
+                }
+            }
+        }
+        
+        // Logout - show setup modal with restore options
+        function logout() {
+            // Disconnect websocket
+            if (ws) {
+                ws.close();
+            }
+            
+            // Show setup modal
+            document.getElementById('setupModal').classList.add('active');
+            
+            // Check if we have saved identity to show restore options
+            const saved = localStorage.getItem('secureChat_identity');
+            if (saved) {
+                document.getElementById('newUserSection').classList.add('hidden');
+                document.getElementById('restoreSection').classList.remove('hidden');
+                document.getElementById('setupButtons').classList.add('hidden');
+                document.getElementById('restoreButtons').classList.remove('hidden');
+                document.getElementById('restoreSection').innerHTML = `
+                    <p style="color: var(--warning);">You have a saved identity. Would you like to restore it?</p>
+                    <p style="font-size: 0.8rem; margin-top: 8px;">Creating a new account will DELETE your old messages and identity after 3 seconds!</p>
+                `;
+            } else {
+                // No saved identity, show normal setup
+                document.getElementById('newUserSection').classList.remove('hidden');
+                document.getElementById('restoreSection').classList.add('hidden');
+                document.getElementById('setupButtons').classList.remove('hidden');
+                document.getElementById('restoreButtons').classList.add('hidden');
+            }
+            
+            // Clear current session data
+            myUserId = null;
+            friends = new Map();
+            friendPublicKeys = new Map();
+            pendingRequests = [];
+            activeChat = null;
+            ws = null;
+        }
+        
+        // Create new account - shows danger warning
+        function createNewAccount() {
+            const dangerDiv = document.createElement('div');
+            dangerDiv.id = 'dangerWarning';
+            dangerDiv.style.cssText = `
+                position: fixed;
+                top: 50%;
+                left: 50%;
+                transform: translate(-50%, -50%);
+                background: #dc2626;
+                color: white;
+                padding: 30px;
+                border-radius: 12px;
+                text-align: center;
+                z-index: 2000;
+                max-width: 400px;
+                box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+            `;
+            dangerDiv.innerHTML = `
+                <h2 style="margin-bottom: 15px;">⚠️ DANGER</h2>
+                <p>Your old identity and all messages will be PERMANENTLY DELETED!</p>
+                <p style="font-size: 1.5rem; margin: 20px 0; font-weight: bold;" id="countdownText">delete (3sec left)</p>
+                <button id="cancelDelete" style="background: white; color: #dc2626; border: none; padding: 12px 24px; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 1rem; margin-top: 10px;">don't delete keep safe</button>
+            `;
+            document.body.appendChild(dangerDiv);
+            
+            let countdown = 3;
+            let timer = null;
+            
+            // Cancel button handler
+            document.getElementById('cancelDelete').onclick = function() {
+                clearInterval(timer);
+                dangerDiv.remove();
+                // Stay on restore screen
+            };
+            
+            timer = setInterval(() => {
+                countdown--;
+                const countdownEl = document.getElementById('countdownText');
+                
+                if (countdown > 0) {
+                    countdownEl.textContent = `delete (${countdown}sec left)`;
+                } else {
+                    countdownEl.textContent = 'delete';
+                }
+                
+                if (countdown <= 0) {
+                    clearInterval(timer);
+                    // Clear all data
+                    localStorage.removeItem('secureChat_identity');
+                    localStorage.removeItem('secureChat_messages');
+                    location.reload();
+                }
+            }, 1000);
+        }
+        
+        // Connect to WebSocket server
+        function connectWebSocket(displayName, publicKey) {
+            updateStatus('connecting', 'Connecting...');
+            
+            ws = new WebSocket(WS_URL);
+            
+            ws.onopen = () => {
+                // Check if we have a saved user_id to reconnect
+                const saved = localStorage.getItem('secureChat_identity');
+                let userIdToReconnect = null;
+                if (saved) {
+                    try {
+                        const identity = JSON.parse(saved);
+                        userIdToReconnect = identity.userId;
+                    } catch (e) {}
+                }
+                
+                // Register with server - send existing user_id if available
+                ws.send(JSON.stringify({
+                    action: 'register',
+                    display_name: displayName,
+                    public_key: publicKey,
+                    user_id: userIdToReconnect  // Will be null for new users
+                }));
+            };
+            
+            ws.onmessage = async (event) => {
+                const data = JSON.parse(event.data);
+                await handleMessage(data);
+            };
+            
+            ws.onclose = () => {
+                updateStatus('offline', 'Disconnected');
+                showNotification('Connection lost. Retrying in 5 seconds...', 'error');
+                setTimeout(() => connectWebSocket(displayName, publicKey), 5000);
+            };
+            
+            ws.onerror = (error) => {
+                console.error('WebSocket error:', error);
+                updateStatus('offline', 'Error');
+            };
+        }
+        
+        // Handle incoming messages
+        async function handleMessage(data) {
+            switch (data.type) {
+                case 'registered':
+                    myUserId = data.user_id;
+                    document.getElementById('myUserId').textContent = myUserId;
+                    updateStatus('online', 'Connected');
+                    showNotification('Connected successfully!', 'success');
+                    
+                    // Update saved identity with new user_id
+                    const saved = localStorage.getItem('secureChat_identity');
+                    if (saved) {
+                        const identity = JSON.parse(saved);
+                        identity.userId = myUserId;
+                        localStorage.setItem('secureChat_identity', JSON.stringify(identity));
+                    }
+                    
+                    // Request friends list and pending requests
+                    ws.send(JSON.stringify({ action: 'get_friends' }));
+                    ws.send(JSON.stringify({ action: 'get_pending_requests' }));
+                    break;
+                    
+                case 'friends_list':
+                    // Store friends and their public keys
+                    data.friends.forEach(friend => {
+                        friends.set(friend.user_id, friend);
+                        friendPublicKeys.set(friend.user_id, friend.public_key);
+                    });
+                    updateFriendsList(data.friends);
+                    break;
+                    
+                case 'pending_requests':
+                    updatePendingRequests(data.requests);
+                    break;
+                    
+                case 'friend_request':
+                    pendingRequests.push({
+                        user_id: data.from_id,
+                        display_name: data.from_name,
+                        public_key: data.public_key
+                    });
+                    updatePendingRequests(pendingRequests);
+                    showNotification(`New friend request from ${data.from_name}`, 'info');
+                    break;
+                    
+                case 'friend_accepted':
+                    console.log('Friend accepted:', data.user_id, 'Key length:', data.public_key ? data.public_key.length : 0);
+                    friends.set(data.user_id, {
+                        display_name: data.display_name,
+                        status: 'online',
+                        public_key: data.public_key
+                    });
+                    friendPublicKeys.set(data.user_id, data.public_key);
+                    console.log('Stored keys:', Array.from(friendPublicKeys.keys()));
+                    updateFriendsList(Array.from(friends.entries()).map(([id, f]) => ({...f, user_id: id})));
+                    showNotification(`${data.display_name} accepted your request`, 'success');
+                    break;
+                    
+                case 'friend_rejected':
+                    showNotification('Friend request was rejected', 'error');
+                    break;
+                    
+                case 'message':
+                    await receiveMessage(data);
+                    break;
+                    
+                case 'message_sent':
+                    // Message delivered successfully
+                    break;
+                    
+                case 'status_update':
+                    if (friends.has(data.user_id)) {
+                        friends.get(data.user_id).status = data.status;
+                        updateFriendsList(Array.from(friends.entries()).map(([id, f]) => ({...f, user_id: id})));
+                    }
+                    break;
+                    
+                case 'error':
+                    showNotification(data.message, 'error');
+                    break;
+            }
+        }
+        
+        // Update friends list UI
+        function updateFriendsList(friendList) {
+            const listEl = document.getElementById('friendList');
+            
+            if (friendList.length === 0) {
+                listEl.innerHTML = '<li class="no-friends">No friends yet. Add someone to start chatting!</li>';
+                return;
+            }
+            
+            listEl.innerHTML = friendList.map(friend => `
+                <li class="friend-item ${activeChat === friend.user_id ? 'active' : ''}" onclick="selectFriend('${friend.user_id}')">
+                    <div class="friend-info">
+                        <span class="friend-name">${escapeHtml(friend.display_name)}</span>
+                        <span class="friend-id">${friend.user_id}</span>
+                    </div>
+                    <span class="friend-status ${friend.status}"></span>
+                </li>
+            `).join('');
+        }
+        
+        // Update pending requests UI
+        function updatePendingRequests(requests) {
+            pendingRequests = requests;
+            const listEl = document.getElementById('requestList');
+            const countEl = document.getElementById('requestCount');
+            
+            countEl.textContent = requests.length > 0 ? `(${requests.length})` : '';
+            
+            if (requests.length === 0) {
+                listEl.innerHTML = '<li class="no-requests">No pending requests</li>';
+                return;
+            }
+            
+            listEl.innerHTML = requests.map(req => `
+                <li class="request-item">
+                    <div class="request-info">
+                        <span class="request-name">${escapeHtml(req.display_name)}</span>
+                        <span class="request-id">${req.user_id}</span>
+                    </div>
+                    <div class="request-actions">
+                        <button class="btn-icon btn-accept" onclick="acceptRequest('${req.user_id}')">✓</button>
+                        <button class="btn-icon btn-reject" onclick="rejectRequest('${req.user_id}')">✗</button>
+                    </div>
+                </li>
+            `).join('');
+        }
+        
+        // Send friend request
+        function sendFriendRequest() {
+            const targetId = document.getElementById('friendIdInput').value.trim().toUpperCase();
+            
+            if (!targetId || targetId.length !== 6) {
+                showNotification('Please enter a valid 6-character User ID', 'error');
+                return;
+            }
+            
+            if (targetId === myUserId) {
+                showNotification('You cannot add yourself', 'error');
+                return;
+            }
+            
+            ws.send(JSON.stringify({
+                action: 'friend_request',
+                target_id: targetId
+            }));
+            
+            document.getElementById('friendIdInput').value = '';
+            showNotification('Friend request sent', 'success');
+        }
+        
+        // Accept friend request
+        function acceptRequest(requesterId) {
+            const req = pendingRequests.find(r => r.user_id === requesterId);
+            if (req) {
+                friendPublicKeys.set(requesterId, req.public_key);
+            }
+            
+            ws.send(JSON.stringify({
+                action: 'accept_friend',
+                requester_id: requesterId
+            }));
+            
+            pendingRequests = pendingRequests.filter(r => r.user_id !== requesterId);
+            updatePendingRequests(pendingRequests);
+        }
+        
+        // Reject friend request
+        function rejectRequest(requesterId) {
+            ws.send(JSON.stringify({
+                action: 'reject_friend',
+                requester_id: requesterId
+            }));
+            
+            pendingRequests = pendingRequests.filter(r => r.user_id !== requesterId);
+            updatePendingRequests(pendingRequests);
+        }
+        
+        // Select a friend to chat with
+        function selectFriend(friendId) {
+            activeChat = friendId;
+            const friend = friends.get(friendId);
+            
+            document.getElementById('emptyState').classList.add('hidden');
+            document.getElementById('chatInterface').classList.remove('hidden');
+            
+            document.getElementById('chatFriendName').textContent = friend.display_name;
+            document.getElementById('chatFriendId').textContent = friendId;
+            
+            // Update friends list to show active selection
+            updateFriendsList(Array.from(friends.entries()).map(([id, f]) => ({...f, user_id: id})));
+            
+            // Display messages for this friend
+            displayMessages(friendId);
+        }
+        
+        // Display messages for active chat
+        function displayMessages(friendId) {
+            const container = document.getElementById('messagesContainer');
+            const msgs = messages.get(friendId) || [];
+            
+            if (msgs.length === 0) {
+                container.innerHTML = `
+                    <div style="text-align: center; color: var(--text-muted); padding: 40px;">
+                        <div style="font-size: 3rem; margin-bottom: 15px;">🔐</div>
+                        <p>Your conversation is end-to-end encrypted.</p>
+                        <p style="font-size: 0.85rem; margin-top: 8px;">Send text, photos, videos, or voice messages securely.</p>
+                    </div>
+                `;
+                return;
+            }
+            
+            container.innerHTML = msgs.map(msg => {
+                // Check if media message
+                if (msg.mediaType === 'image') {
+                    return `
+                        <div class="message ${msg.type}">
+                            <img src="${msg.mediaData}" class="message-image" onclick="window.open('${msg.mediaData}', '_blank')">
+                            <div class="message-time">${formatTime(msg.timestamp)}</div>
+                        </div>
+                    `;
+                } else if (msg.mediaType === 'video') {
+                    return `
+                        <div class="message ${msg.type}">
+                            <video src="${msg.mediaData}" class="message-video" controls></video>
+                            <div class="message-time">${formatTime(msg.timestamp)}</div>
+                        </div>
+                    `;
+                } else if (msg.mediaType === 'voice') {
+                    const duration = msg.duration || 0;
+                    const mins = Math.floor(duration / 60);
+                    const secs = duration % 60;
+                    const audioId = 'audio-' + Math.random().toString(36).substr(2, 9);
+                    const btnId = 'btn-' + audioId;
+                    return `
+                        <div class="message ${msg.type}">
+                            <div class="voice-message">
+                                <audio id="${audioId}" src="${msg.mediaData}" preload="auto" 
+                                    oncanplaythrough="console.log('Audio ready to play:', '${audioId}')"
+                                    onerror="console.error('Audio load error:', '${audioId}')"
+                                    onended="document.getElementById('${btnId}').textContent='▶'" 
+                                    onpause="document.getElementById('${btnId}').textContent='▶'" 
+                                    onplay="document.getElementById('${btnId}').textContent='⏸'"
+                                    style="width: 0; height: 0; opacity: 0; position: absolute;"></audio>
+                                <button id="${btnId}" class="voice-message-play" onclick="toggleAudio('${audioId}', '${btnId}')">▶</button>
+                                <span class="voice-message-duration">${mins}:${secs.toString().padStart(2, '0')}</span>
+                            </div>
+                            <div class="message-time">${formatTime(msg.timestamp)}</div>
+                        </div>
+                    `;
+                } else {
+                    return `
+                        <div class="message ${msg.type}">
+                            ${escapeHtml(msg.content)}
+                            <div class="message-time">${formatTime(msg.timestamp)}</div>
+                        </div>
+                    `;
+                }
+            }).join('');
+            
+            container.scrollTop = container.scrollHeight;
+        }
+        
+        // Send encrypted message
+        async function sendMessage() {
+            const input = document.getElementById('messageInput');
+            const content = input.value.trim();
+            
+            if (!content || !activeChat) return;
+            
+            const publicKeyArmored = friendPublicKeys.get(activeChat);
+            console.log('Sending to:', activeChat, 'Key found:', !!publicKeyArmored, 'Keys available:', Array.from(friendPublicKeys.keys()));
+            if (!publicKeyArmored) {
+                showNotification('Public key not found for this friend', 'error');
+                return;
+            }
+            
+            try {
+                const publicKey = await openpgp.readKey({ armoredKey: publicKeyArmored });
+                
+                const encrypted = await openpgp.encrypt({
+                    message: await openpgp.createMessage({ text: content }),
+                    encryptionKeys: publicKey
+                });
+                
+                ws.send(JSON.stringify({
+                    action: 'send_message',
+                    target_id: activeChat,
+                    encrypted_message: encrypted
+                }));
+                
+                // Store message locally
+                if (!messages.has(activeChat)) {
+                    messages.set(activeChat, []);
+                }
+                messages.get(activeChat).push({
+                    type: 'outgoing',
+                    content: content,
+                    timestamp: new Date().toISOString()
+                });
+                
+                // Persist to localStorage
+                saveMessages();
+                
+                input.value = '';
+                displayMessages(activeChat);
+            } catch (error) {
+                showNotification('Failed to encrypt message: ' + error.message, 'error');
+            }
+        }
+        
+        // Receive and decrypt message
+        async function receiveMessage(data) {
+            if (!messages.has(data.from_id)) {
+                messages.set(data.from_id, []);
+            }
+            
+            try {
+                // Parse private key
+                const privateKey = await openpgp.readPrivateKey({ 
+                    armoredKey: myKeyPair.privateKey 
+                });
+                
+                const message = await openpgp.readMessage({
+                    armoredMessage: data.encrypted_message
+                });
+                
+                // Decrypt message
+                const { data: decrypted } = await openpgp.decrypt({
+                    message: message,
+                    decryptionKeys: privateKey
+                });
+                
+                // Try to parse as media message
+                let msgContent = decrypted;
+                let mediaType = null;
+                let mediaData = null;
+                let duration = null;
+                
+                try {
+                    const parsed = JSON.parse(decrypted);
+                    if (parsed.type && parsed.data) {
+                        mediaType = parsed.type;
+                        mediaData = parsed.data;
+                        duration = parsed.duration;
+                        msgContent = parsed.type === 'image' ? '[Image]' : 
+                                    parsed.type === 'video' ? '[Video]' : 
+                                    parsed.type === 'voice' ? '[Voice Message]' : '[File]';
+                        console.log('Received media:', mediaType, 'Data length:', mediaData ? mediaData.length : 0);
+                    }
+                } catch (e) {
+                    // Plain text message
+                }
+                
+                messages.get(data.from_id).push({
+                    type: 'incoming',
+                    content: msgContent,
+                    mediaType: mediaType,
+                    mediaData: mediaData,
+                    duration: duration,
+                    timestamp: data.timestamp
+                });
+                
+                // Persist to localStorage
+                saveMessages();
+                
+                // If this is the active chat, update display
+                if (activeChat === data.from_id) {
+                    displayMessages(data.from_id);
+                } else {
+                    showNotification(`New message from ${data.from_name}`, 'info');
+                }
+            } catch (error) {
+                console.error('Failed to decrypt message:', error);
+                messages.get(data.from_id).push({
+                    type: 'incoming',
+                    content: '[Unable to decrypt message]',
+                    timestamp: data.timestamp
+                });
+            }
+        }
+        
+        // Handle Enter key in message input
+        function handleKeyDown(event) {
+            if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault();
+                sendMessage();
+            }
+        }
+        
+        // Switch tabs
+        function switchTab(tab) {
+            document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+            
+            event.target.classList.add('active');
+            document.getElementById(tab + 'Tab').classList.add('active');
+        }
+        
+        // Update connection status
+        function updateStatus(status, text) {
+            const dot = document.getElementById('statusDot');
+            const statusText = document.getElementById('statusText');
+            
+            dot.className = 'status-dot ' + status;
+            statusText.textContent = text;
+        }
+        
+        // Show notification
+        function showNotification(message, type) {
+            const notification = document.getElementById('notification');
+            notification.textContent = message;
+            notification.className = 'notification ' + type;
+            
+            setTimeout(() => notification.classList.add('show'), 10);
+            setTimeout(() => {
+                notification.classList.remove('show');
+            }, 3000);
+        }
+        
+        // Play audio from data URL
+        function playAudio(audioId) {
+            console.log('Attempting to play audio:', audioId);
+            const audio = document.getElementById(audioId);
+            if (audio) {
+                console.log('Audio element found, src length:', audio.src ? audio.src.length : 0);
+                // Reset to beginning if already played
+                audio.currentTime = 0;
+                const playPromise = audio.play();
+                if (playPromise !== undefined) {
+                    playPromise.then(() => {
+                        console.log('Audio playing successfully');
+                    }).catch(e => {
+                        console.error('Audio play failed:', e);
+                        showNotification('Failed to play audio: ' + e.message, 'error');
+                    });
+                }
+            } else {
+                console.error('Audio element not found:', audioId);
+            }
+        }
+        
+        // Toggle audio play/pause
+        function toggleAudio(audioId, btnId) {
+            const audio = document.getElementById(audioId);
+            const btn = document.getElementById(btnId);
+            if (!audio) {
+                console.error('Audio element not found:', audioId);
+                return;
+            }
+            
+            console.log('Toggle audio, paused:', audio.paused, 'volume:', audio.volume, 'muted:', audio.muted);
+            
+            if (audio.paused) {
+                // Pause any other playing audio first
+                document.querySelectorAll('audio').forEach(a => {
+                    if (a.id !== audioId && !a.paused) {
+                        a.pause();
+                        a.currentTime = 0;
+                    }
+                });
+                
+                // Ensure volume is up and not muted
+                audio.volume = 1.0;
+                audio.muted = false;
+                audio.currentTime = 0;
+                
+                console.log('Attempting to play audio, src length:', audio.src.length);
+                const playPromise = audio.play();
+                if (playPromise !== undefined) {
+                    playPromise.then(() => {
+                        console.log('Audio playing');
+                    }).catch(e => {
+                        console.error('Audio play failed:', e);
+                        showNotification('Failed to play audio: ' + e.message, 'error');
+                    });
+                }
+            } else {
+                audio.pause();
+            }
+        }
+        
+        // Utility functions
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+        
+        function formatTime(timestamp) {
+            const date = new Date(timestamp);
+            return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        }
+        
+        // Save messages to localStorage
+        function saveMessages() {
+            const messagesObj = {};
+            messages.forEach((value, key) => {
+                messagesObj[key] = value;
+            });
+            localStorage.setItem('secureChat_messages', JSON.stringify(messagesObj));
+        }
+        
+        // Load messages from localStorage
+        function loadMessages() {
+            const saved = localStorage.getItem('secureChat_messages');
+            if (saved) {
+                try {
+                    const messagesObj = JSON.parse(saved);
+                    messages = new Map(Object.entries(messagesObj));
+                } catch (e) {
+                    console.error('Failed to load messages:', e);
+                    messages = new Map();
+                }
+            }
+        }
+        
+        // Media handling functions
+        async function handleFileUpload(event) {
+            const file = event.target.files[0];
+            if (!file || !activeChat) return;
+            
+            if (file.size > 5 * 1024 * 1024) {
+                showNotification('File too large. Max 5MB.', 'error');
+                return;
+            }
+            
+            const reader = new FileReader();
+            reader.onload = async (e) => {
+                const base64Data = e.target.result;
+                const isImage = file.type.startsWith('image/');
+                const isVideo = file.type.startsWith('video/');
+                
+                const messageData = JSON.stringify({
+                    type: isImage ? 'image' : isVideo ? 'video' : 'file',
+                    data: base64Data,
+                    filename: file.name,
+                    mimeType: file.type
+                });
+                
+                await sendEncryptedMedia(messageData);
+            };
+            reader.readAsDataURL(file);
+        }
+        
+        async function toggleVoiceRecording() {
+            if (mediaRecorder && mediaRecorder.state === 'recording') {
+                stopVoiceRecording();
+                return;
+            }
+            
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                // Use audio/mp4 for better compatibility
+                const mimeType = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/mp4';
+                mediaRecorder = new MediaRecorder(stream, { mimeType });
+                recordedChunks = [];
+                
+                mediaRecorder.ondataavailable = (e) => {
+                    if (e.data.size > 0) recordedChunks.push(e.data);
+                };
+                
+                mediaRecorder.onstop = async () => {
+                    const blob = new Blob(recordedChunks, { type: mimeType });
+                    const reader = new FileReader();
+                    reader.onload = async (e) => {
+                        const base64Data = e.target.result;
+                        const duration = Math.floor((Date.now() - recordingStartTime) / 1000);
+                        console.log('Voice recorded, duration:', duration, 'data length:', base64Data.length);
+                        
+                        const messageData = JSON.stringify({
+                            type: 'voice',
+                            data: base64Data,
+                            duration: duration
+                        });
+                        await sendEncryptedMedia(messageData);
+                    };
+                    reader.readAsDataURL(blob);
+                    stream.getTracks().forEach(track => track.stop());
+                };
+                
+                mediaRecorder.start(100); // Collect data every 100ms
+                recordingStartTime = Date.now();
+                
+                document.getElementById('voiceRecording').classList.remove('hidden');
+                document.getElementById('voiceBtn').classList.add('recording');
+                
+                recordingTimer = setInterval(() => {
+                    const elapsed = Math.floor((Date.now() - recordingStartTime) / 1000);
+                    const mins = Math.floor(elapsed / 60);
+                    const secs = elapsed % 60;
+                    document.getElementById('recordingTime').textContent = `${mins}:${secs.toString().padStart(2, '0')}`;
+                }, 1000);
+                
+            } catch (err) {
+                console.error('Microphone error:', err);
+                showNotification('Microphone access denied or not available', 'error');
+            }
+        }
+        
+        function stopVoiceRecording() {
+            if (mediaRecorder && mediaRecorder.state === 'recording') {
+                mediaRecorder.stop();
+            }
+            resetRecordingUI();
+        }
+        
+        function cancelVoiceRecording() {
+            if (mediaRecorder && mediaRecorder.state === 'recording') {
+                mediaRecorder.stop();
+                recordedChunks = [];
+            }
+            resetRecordingUI();
+        }
+        
+        function resetRecordingUI() {
+            clearInterval(recordingTimer);
+            document.getElementById('voiceRecording').classList.add('hidden');
+            document.getElementById('voiceBtn').classList.remove('recording');
+            document.getElementById('recordingTime').textContent = '0:00';
+        }
+        
+        async function sendEncryptedMedia(messageData) {
+            if (!activeChat) return;
+            
+            const publicKeyArmored = friendPublicKeys.get(activeChat);
+            if (!publicKeyArmored) {
+                showNotification('Public key not found', 'error');
+                return;
+            }
+            
+            try {
+                const publicKey = await openpgp.readKey({ armoredKey: publicKeyArmored });
+                
+                const encrypted = await openpgp.encrypt({
+                    message: await openpgp.createMessage({ text: messageData }),
+                    encryptionKeys: publicKey
+                });
+                
+                ws.send(JSON.stringify({
+                    action: 'send_message',
+                    target_id: activeChat,
+                    encrypted_message: encrypted
+                }));
+                
+                // Store locally
+                if (!messages.has(activeChat)) messages.set(activeChat, []);
+                const parsed = JSON.parse(messageData);
+                console.log('Sending media:', parsed.type, 'Data length:', parsed.data ? parsed.data.length : 0);
+                messages.get(activeChat).push({
+                    type: 'outgoing',
+                    content: parsed.type === 'image' ? '[Image]' : parsed.type === 'video' ? '[Video]' : parsed.type === 'voice' ? '[Voice Message]' : '[File]',
+                    mediaType: parsed.type,
+                    mediaData: parsed.data,
+                    duration: parsed.duration,
+                    timestamp: new Date().toISOString()
+                });
+                
+                // Persist to localStorage
+                saveMessages();
+                
+                displayMessages(activeChat);
+            } catch (error) {
+                showNotification('Failed to send media: ' + error.message, 'error');
+            }
+        }
+        
+        // Initialize on load
+        loadMessages();
+        checkSavedIdentity();
+        setInterval(() => {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ action: 'ping' }));
+            }
+        }, 30000);
+    </script>
+</body>
+</html>
